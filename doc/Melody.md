@@ -36,7 +36,7 @@ This project aims to build a music NFT and liquidity management platform based o
 - **Music Series (MusicSeries)**:
   - Artists create series (via Factory).
   - Create songs under the factory pattern (`createMusic`).
-  - Each song corresponds to an independent MemeToken (ERC20).
+  - Each song corresponds to an independent MemeToken (BEP-20).
 - **Song Management**:
   - Record song metadata (IPFS CID, target raise amount, raise duration, etc.).
   - User subscription funds (payable).
@@ -78,8 +78,8 @@ This project aims to build a music NFT and liquidity management platform based o
   - `FractionalVaultV3` calls `addVesting` upon `finalizeDistribution`.
 
 ### 3.6 MemeToken
-- Specific ERC20 token for each song.
-- Standard ERC20 interface.
+- Specific BEP-20 token for each song.
+- Standard BEP-20 interface.
 - Used to represent participating user equity.
 
 ---
