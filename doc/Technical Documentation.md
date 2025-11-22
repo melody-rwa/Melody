@@ -669,7 +669,7 @@ Interacts with Pancakeswap V3 PositionManager; handles LP minting and allocation
 ## 8. MemeToken
 
 ### Function
-Standard ERC20 token representing single investment shares.
+Standard BEP-20 token representing single investment shares.
 
 ### Methods
 
