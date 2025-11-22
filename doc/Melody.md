@@ -1,4 +1,4 @@
-# MELODY Platform Document
+# MELODY - MUSIC RWA Platform
 
 ## 1. Background & Objectives
 This project aims to build a music NFT and liquidity management platform based on blockchain technology (EVM-compatible chain).
