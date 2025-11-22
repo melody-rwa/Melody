@@ -1,0 +1,36 @@
+
+.datetime-picker-wrapper .react-datepicker-wrapper {
+  width: 100%;
+}
+
+.datetime-picker-wrapper .react-datepicker__input-container input {
+  width: 100%;
+  height: 32px;       
+  box-sizing: border-box;
+  padding: 4px 8px;   
+  font-size: 14px;    
+
+  border-radius: 4px;     
+  outline: none;          
+  transition: border 0.2s;
+}
+
+
+.datetime-picker-wrapper .react-datepicker__input-container input:focus {
+  border: none;
+  outline: none;
+}
+
+.custom-datepicker-popper {
+  min-width: 300px;
+}
+
+.react-datepicker__close-icon {
+  background-color: transparent;
+  border: none;
+  font-size: 16px;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+}

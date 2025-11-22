@@ -1,0 +1,102 @@
+
+.melo-launch-left {
+    width: 300px;        
+    padding-left: 30px;
+    padding: 10px 20px 0 30px;
+    background: #111;
+    color: #FFF;
+    flex-shrink: 0;
+   
+  }
+  
+  .melo-launch-right {
+    
+    flex: 1;            
+   
+    background: #111;
+    position: relative;
+    display: flex;
+    justify-content: center;   
+    /* align-items: center;       */
+  }
+  
+  .top-menu-text{
+    color: #7F7F7F;
+
+
+
+  }
+
+  .top-menu{
+
+height: 32px;
+padding: 4px 12px;
+justify-content: space-between;
+align-items: center;
+align-self: stretch;
+  }
+  .melo-check-label {
+    color: #7b7b7b;
+    font-feature-settings: 'liga' off, 'clig' off;
+    font-family: Roboto, sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 28px;
+    letter-spacing: 0.75px;
+    cursor: pointer;
+  }
+  
+
+  .melo-check-label.invalid {
+    color: #dc3545 !important;
+  }
+  
+  .melo-invalid-feedback {
+    color: #dc3545;
+    font-size: 13px;
+    margin-top: 4px;
+    margin-left: 1.8em; 
+  }
+  
+
+
+.melo-check-y{
+  color: #F9752D;
+font-feature-settings: 'liga' off, 'clig' off;
+font-family: Roboto;
+font-size: 14px;
+font-style: normal;
+font-weight: 500;
+line-height: 28px;
+letter-spacing: 0.75px;
+}
+
+.form-check {
+  display: flex;
+  align-items: center;
+  gap: 8px; 
+}
+
+
+.form-check-input {
+  width: 24px;           
+  height: 24px;
+  background-color: #505050;  
+  border: 0;     
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  margin: 0;
+}
+
+
+.form-check-input:checked {
+  background-color: #505050;  
+  border: 0;
+}
+
+.form-check-input:focus {
+  outline: none;
+  box-shadow: none;
+  border-color: inherit; 
+}
+

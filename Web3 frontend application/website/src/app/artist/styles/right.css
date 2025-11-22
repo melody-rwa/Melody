@@ -1,0 +1,21 @@
+.mole-artist-right {
+    flex: 1;
+    background-size: cover;        /* Stretch/cut to fully cover the container */
+    background-position: center;   /* Center cropping (can be changed to top/right...) */
+    background-repeat: no-repeat;   /* non-repetitive tiling */
+    /* Ensure that the container has a certain height, otherwise the background cannot be seen */
+    width: 100%;   
+  }
+  
+  .mole-artist-right1 {
+    background-image: url('/artist_1.png');
+  }
+   
+  .mole-artist-right2 {
+    background-image: url('/artist_2.png');
+  }
+  
+  .mole-artist-right3 {
+    background-image: url('/artist_3.png');
+  }
+  

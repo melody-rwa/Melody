@@ -1,0 +1,92 @@
+
+services:     
+  nginx:
+    image: nginx:latest
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    container_name: nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./data/config/default.conf:/etc/nginx/conf.d/default.conf
+      - ..data/certbot/conf:/etc/letsencrypt
+      - ./data/html:/usr/share/nginx/html
+      - ./data/images:/home
+    depends_on:
+      - website
+    networks:
+      - dev_network
+
+  website:
+    container_name: website  
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    build:
+      context: ./mysql
+      dockerfile: prod.Dockerfile    
+    restart: always
+    env_file: .env.production
+    volumes:
+      - ./data/images/avatar:/app/avatar
+      - ./data/images/logo:/app/logo
+      - ./data/images/music:/app/music
+    ports:
+      - 3000:3000
+    links:
+      - mysqldb
+    networks:
+      - dev_network
+
+  monitor:
+    container_name: eventService  
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    build:
+      context: ./monitor
+      dockerfile: prod.Dockerfile        
+    volumes:
+      - ./data/images/maxblock:/app/maxblock
+    links:
+      - mysqldb
+    restart: always
+    env_file: .env.production
+    networks:
+      - dev_network
+
+  mysqldb:
+    container_name: mysqldb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    build:
+      context: ./mysql
+      dockerfile: prod.Dockerfile
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 'Melody..123'
+    volumes:
+      - ./data/mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      retries: 10
+      interval: 3s
+      timeout: 30s
+    networks:
+      - dev_network
+
+networks:
+  dev_network:
+    driver: bridge
+

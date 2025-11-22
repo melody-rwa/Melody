@@ -1,0 +1,49 @@
+{
+  "scripts": {
+    "dev": "next dev",
+    "lint": "eslint src && tsc && prettier src --check",
+    "test": "echo 'No tests yet'",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@reduxjs/toolkit": "^2.9.0",
+    "bootstrap": "^5.3.8",
+    "ethers": "^6.15.0",
+    "framer-motion": "^12.23.22",
+    "jose": "^6.1.0",
+    "mysql2": "^3.15.1",
+    "next": "^15.5.4",
+    "papaparse": "^5.5.3",
+    "react": "^19.2.0",
+    "react-bootstrap": "^2.10.10",
+    "react-datepicker": "^8.7.0",
+    "react-dom": "^19.2.0",
+    "react-redux": "^9.2.0",
+    "siwe": "^3.0.0",
+    "styled-components": "^6.1.19",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.1.0",
+    "@types/lodash": "^4.17.5",
+    "@types/node": "^20.19.11",
+    "@types/papaparse": "^5.3.16",
+    "@types/request": "^2.48.13",
+    "autoprefixer": "^10.4.21",
+    "eslint": "9.11.1",
+    "eslint-config-next": "^15.3.0",
+    "postcss": "^8.5.6",
+    "prettier": "^3.3.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  },
+  "prettier": {
+    "singleQuote": true,
+    "bracketSpacing": false,
+    "trailingComma": "none"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
