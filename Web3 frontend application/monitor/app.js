@@ -1,25 +1,115 @@
-
-const Server = require('./src/server');
-const schedule =require("node-schedule");
 const mysql = require('mysql2/promise'); 
 const dotenv=require('dotenv');
-const MultiRpcClient=require('./src/MultiRpcClient')
 const serriseAbi=require('./src/abi/MusicSeries_abi.json')
 const factoryAbi=require('./src/abi/MusicFactory_abi.json');
-
+const vestvalut=require('./src/abi/VestingVault_abi.json');
+const fractvault3=require('./src/abi/FractionalVaultV3_abi.json');
+const artistregist=require('./src/abi/ArtistRegistry_abi.json');
+const { ethers, Interface, keccak256, toUtf8Bytes } = require("ethers");
 dotenv.config();
 
-const rpcProviders = [
-  'https://bsc-testnet.publicnode.com',
-  'https://bsc-testnet.infura.io/v3/5c746c888c834f15b16c32e426c67abc', 
+const abi = [
+  "event FeesClaimed(uint256 indexed songId, address indexed artist, address token0, address token1, uint256 amount0, uint256 amount1)",
+  "event LPRedeemed(uint256 indexed songId, address indexed artist, uint256 lpUnits, address token0, address token1, uint256 amount0, uint256 amount1)",
+  "event Claimed(address indexed user, uint256 indexed songId, uint256 amount0, uint256 amount1,address token0,address token1)",
+  "event Redeemed(address indexed user, uint256 indexed songId, uint128 liqRemoved, uint256 amount0, uint256 amount1,address token0,address token1)",
+  "event ArtistRegistered(address indexed artist, string profileCid)",
+  "event MusicPre(address indexed artist,uint256 songPreId,uint256 now,uint256 intervalTime)",
+  "event SongCreated(address indexed seriesAddr,uint256 indexed tokenId, string ipfsCid, uint256 targetBNB, uint256 durationSec, address memeToken,uint256 time,uint256 songId)",
+  "event Subscribed(address indexed seriesAddr,uint256 indexed tokenId, uint256 indexed subId, address user, uint256 amountBNB, uint256 tokenAmount, uint256 secondsBought, uint256 startSec,uint256 songId,uint256 time)",
+  "event Finalized(address indexed seriesAddr,uint256 indexed tokenId, uint256 lpTokenId, uint128 liquidity,uint256 songId)",
+  "event WhitelistAdded(address indexed seriesAddr,uint256 indexed tokenId, address[] accounts,uint256 songId)"
 ];
-console.log(rpcProviders)
-const rpcClient = new MultiRpcClient(rpcProviders);
 
-let start_block=73097151n; 
-var monitor = 0; //Restart every 10 minutes 
-var server1=new Server();
-var maxData = []; // Record the maximum block number that has been listened to
+const iface = new Interface(abi);
+const topics = iface.fragments
+  .filter(f => f.type === "event")
+  .map(f => {
+    const types = f.inputs.map(i => i.type).join(",");
+    const signature = `${f.name}(${types})`;
+    return keccak256(toUtf8Bytes(signature));
+  });
+
+const CONFIRMATIONS = 15; // Delay 15 blocks to prevent rollback
+
+const provider = new ethers.JsonRpcProvider(process.env.NEXT_PUBLIC_HTTPS_URL);
+let lastSyncedBlock = 0;
+const wallet = new ethers.Wallet("f8b731a244fd1a9e5c291fc9f5c6f70ea9571d53581561cd61874bd55a4614fd", provider);
+
+const ADDRS = [
+ process.env.NEXT_PUBLIC_MusicFactory.toLowerCase(),
+ process.env.NEXT_PUBLIC_FractionalVaultV3.toLowerCase(),
+ process.env.NEXT_PUBLIC_VestingVault.toLowerCase(),
+ process.env.NEXT_PUBLIC_ArtistRegistry.toLowerCase(),
+];
+
+const handlers = {
+  [ADDRS[0]]: {
+    contract: new ethers.Contract(process.env.NEXT_PUBLIC_MusicFactory, factoryAbi, wallet),
+    events: {
+      SongCreated:  async (args) =>await SongCreatedBusi(args),
+      Subscribed: async (args) =>await SubscribedBusi(args),
+      Finalized:  async (args) =>await FinalizedBusi(args),
+      WhitelistAdded: async (args) =>await WhitelistAddedBusi(args),
+      MusicPre:  async (args) =>await MusicPreBusi(args),
+    }
+  },
+
+  [ADDRS[1]]: {
+    contract: new ethers.Contract(process.env.NEXT_PUBLIC_FractionalVaultV3, fractvault3, wallet),
+    events: {
+      Claimed:  async (args) =>await ClaimedBusi(args),
+      Redeemed:  async (args) =>await userRedeemedBusi(args),
+    }
+  },
+
+  [ADDRS[2]]: {
+    contract: new ethers.Contract(process.env.NEXT_PUBLIC_VestingVault, vestvalut, wallet),
+    events: {
+      FeesClaimed: async (args) =>await FeesClaimedBusi(args),
+      LPRedeemed: async(args) =>await LPRedeemedBusi(args),
+    }
+  },
+
+  [ADDRS[3]]: {
+    contract: new ethers.Contract(process.env.NEXT_PUBLIC_ArtistRegistry, artistregist, wallet),
+    events: {
+      ArtistRegistered:async (args) =>await ArtistRegisteredBusi(args)
+      
+    }
+  },
+};
+
+async function handle(log) {
+  const addr = log.address.toLowerCase();
+  const entry = handlers[addr];
+  if (!entry) return; 
+
+  try {
+    const parsed = entry.contract.interface.parseLog(log);
+    const fn = entry.events[parsed.name];
+    if (fn) {
+
+      const para={
+        event:parsed.name,
+        address:addr,
+        blockHash:log.blockHash,
+        blockNumber:log.blockNumber,
+        transactionHash:log.transactionHash,
+        data:parsed.args
+      };
+
+     await fn.call(this,para);   // Execute event handling
+
+    } else {
+      console.log("Unknown event:", parsed.name, parsed.args);
+    }
+
+  } catch (err) {
+    // parse
+  }
+}
+
 
 const promisePool = mysql.createPool({
    host: process.env.MYSQL_HOST,
@@ -29,7 +119,7 @@ const promisePool = mysql.createPool({
    port: process.env.MYSQL_PORT,
    waitForConnections: true,
    connectionLimit: 1,  
-   queueLimit: 0,       
+   queueLimit: 0,      
    enableKeepAlive: true,
    keepAliveInitialDelay: 0
  });
@@ -38,128 +128,102 @@ const promisePool = mysql.createPool({
    console.error('Database connection error:', err);
  });
 
-async function daoListenStart() {
-  p('daoListenStart----------------->')
-   monitor = 0;
-   server1.daoapi.ArtistRegistry.unBind();
-   server1.daoapi.FractionalVaultV3.unBind();
-   server1.daoapi.MusicFactory.unBind();
-   server1.daoapi.VestingVault.unBind();
-   await server1.restart();
-   daoListen();
-}
-
-if (server1.web3 && server1.web3.currentProvider && server1.web3.currentProvider.on) {
-   server1.web3.currentProvider.on('error', async (err) => {
-     console.error('[WebSocket] error:', err.message);
-     console.log('[Server] Attempting automatic restart due to WS error...');
-     try {
-       await server1.restart();
-       console.log('[Server] Automatic restart successful');
-     } catch (err) {
-       console.error('[Server] Automatic restart failed:', err.message);
-     }
-   });
+ async function finalize(item){
+    const contract = new ethers.Contract(item.series_address, serriseAbi, wallet);
+    try {
+      const tx =  await contract.finalize(item.song_id);
+      console.log("transaction hash:", tx.hash);
+      await tx.wait(); 
+      console.log(`finalize(${item.song_id}) Transaction confirmed`);
+     } catch (error) {
+       console.log(geneErr(error?.message.toString()))
+    }
  }
 
-async function hand() {
-    //Obtain the maximum block number that needs to be monitored from the database
-   let sql = 'SELECT IFNULL(MAX(block_num),0)+1 s FROM w_music'  //0 
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM w_artist'  //1 
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM w_finalized' //2 
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM t_music_sub'  //3 
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM t_whitelist'  //4
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM t_claim'  //5
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM t_user_redeem'  //6
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM t_artist_redeem'  //7
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM t_claim_artist'  //8
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM w_musc_pre'  //9
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM t_nftog'  //10
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM t_nftearly'  //11
-        + ' UNION ALL SELECT IFNULL(MAX(block_num),0) FROM t_nftcon';  //12
+ function geneErr(errStr){
 
-   const rows=await promisePool.query(sql,[]);
-   rows[0].forEach(element => {maxData.push({value: BigInt(element.s)>start_block?BigInt(element.s):start_block})});
-   console.info(maxData)
-   
-   await server1.start();
-   daoListen();
-   schedule.scheduleJob('*/5 * * * * *', () => {
-    server1.daoapi.processQueue();
-    requestBlock();
-    if (monitor > 12*10 && server1.daoapi.eventQueue.length===0 && !server1.daoapi.isProcessing) daoListenStart();
-    monitor++;
-  });
-  requestBlock();
-}
-
-
-
+    if(errStr.startsWith('execution reverted'))
+    {
+      const m = errStr.match(/execution reverted:\s*"([^"]+)"/);
+      const mess= m ? m[1] : '';
+      return mess;
+    } 
+    else {
+      return 'On chain request error';
+    }
+ }
 const searchSql='SELECT song_id,series_address FROM t_music a WHERE song_id>0 AND is_end=0 AND EXISTS(SELECT 1 FROM t_music_sub s WHERE s.song_id = a.song_id) AND UNIX_TIMESTAMP()-start_time >(8*60)';
 const createSongSql='SELECT song_pre_id FROM t_music WHERE song_id=0 AND song_pre_id>0 AND confirm_time<UNIX_TIMESTAMP()';
 
-async function requestBlock(){
-    
-  const [rows,]=await promisePool.query(searchSql,[]);
-  if(Array.isArray(rows)){
-    rows.forEach((item, index) => {
-      rpcClient.sendContract(item.series_address,serriseAbi,'finalize',[item.song_id])
-    });
+async function requestBlock() {
+  // p('ookk loop')
+  const [rows] = await promisePool.query(searchSql, []);
+  for (const item of rows) {
+    await finalize(item);      // Process in order
   }
 
-  const [songrows,]=await promisePool.query(createSongSql,[]);
-  if(Array.isArray(songrows)){
-    songrows.forEach((item, index) => {
-      rpcClient.sendContract(process.env.NEXT_PUBLIC_MusicFactory,factoryAbi,'musicConfirm',[item.song_pre_id])
-    });
+  const [songrows] = await promisePool.query(createSongSql, []);
+  for (const item of songrows) { 
+    try {
+        const tx = await  handlers[process.env.NEXT_PUBLIC_MusicFactory.toLowerCase()].contract.musicConfirm(item.song_pre_id);
+        console.log("transaction hash:", tx.hash);
+        await tx.wait(); 
+        console.log(`musicConfirm(${item.song_id}) Transaction confirmed`);
+     } catch (error) {
+      console.log(geneErr(error?.message.toString()))
+    }
   }
-
 }
 
-async function daoListen() {
-   p("start...........")
+
+
+async function startMultiPolling() {
+   async function loop() {
+    await requestBlock();     
+    setTimeout(loop, 5000);     
+    }
+    loop(); 
+
+    lastSyncedBlock =Number(await provider.getBlockNumber());
+    // lastSyncedBlock=74022364
+
+    while (true) {
+        try {
+            const currentBlock = await provider.getBlockNumber();
+            const safeBlock = currentBlock - CONFIRMATIONS;
+            if (safeBlock > lastSyncedBlock) {
+                //Calculate the range of this pull, with a maximum of 2000 blocks
+                const endBlock = Math.min(safeBlock, lastSyncedBlock + 2000);
+                
+                // console.log(` ${lastSyncedBlock + 1} -> ${endBlock}====>${endBlock-lastSyncedBlock-1}`);
+                    const logs = await provider.getLogs({
+                        fromBlock: lastSyncedBlock + 1,
+                        toBlock: endBlock,
+                        address: ADDRS, 
+                        topics: [topics] // If you want to listen for specific event signatures, you can add them here. Not adding them means listening for all events
+                    });
   
-   const subscribeMethods = [
-     { method: ArtistRegistered, name: 'ArtistRegistered', delay: true },
-     { method: WhitelistAdded, name: 'WhitelistAdded', delay: true },
-     { method: SongCreated, name: 'SongCreated', delay: true },
-     { method: Finalized, name: 'Finalized', delay: true },
-     { method: Subscribed, name: 'Subscribed', delay: true },
-     { method: Claimed, name: 'Claimed', delay: true },
-     { method: userRedeemed, name: 'userRedeemed', delay: true },
-     { method: LPRedeemed, name: 'LPRedeemed', delay: true },
-     { method: FeesClaimed, name: 'FeesClaimed', delay: true },
-     { method: MusicPre, name: 'MusicPre', delay: true },
-   ];
- 
-   // Sequential execution with delay
-   for (let i = 0; i < subscribeMethods.length; i++) {
-     const { method, name, delay } = subscribeMethods[i];
-     
-     try {
-       method(); // Execute subscription method
+                for (const log of logs) { await handle(log) }
+                lastSyncedBlock = endBlock;
+            } else {
 
-       // If it's not the last method, add a delay
-       if (delay && i < subscribeMethods.length - 1) {
-         const delayMs = Math.floor(Math.random() * 2000) + 1000; //1-3 second random delay
-       
-         await new Promise(resolve => setTimeout(resolve, delayMs));
-       }
-       
-     } catch (error) {
-       console.error(`Error executing subscription ${name}:`, error);
-       // When an error occurs, wait for a period of time before continuing
-       const errorDelay = 2000; // Wait for 2 seconds when there is an error
-       console.log(`Error occurred, waiting$ {errorDelay}ms Continue afterwards ..`);
-       await new Promise(resolve => setTimeout(resolve, errorDelay));
-     }
-   }
-   
+                await new Promise(r => setTimeout(r, 3000));
+                console.log("Wait a moment.")
+            }
+        } catch (err) {
+            console.error("Polling error:", err);
+            await new Promise(r => setTimeout(r, 5000)); 
+        }
+        
+        const currentBlock = await provider.getBlockNumber();
+        if (currentBlock - lastSyncedBlock < 5) {
+             await new Promise(r => setTimeout(r, 3000));
+        }
+        await new Promise(r => setTimeout(r, 2000));
+    }
+}
 
- }
-
-// Start monitoring
-hand();
+startMultiPolling();
 
 
 async function executeSql(addSql, addSqlParams) {
@@ -167,195 +231,212 @@ async function executeSql(addSql, addSqlParams) {
    await promisePool.execute(addSql,addSqlParams)
 }
 
-
 function p(str) {
   let myDate = new Date();
   console.info(myDate.getFullYear() + '-' + (myDate.getMonth() + 1) + '-' + myDate.getDate() + ' ' + myDate.getHours() + ":" + myDate.getMinutes() + ":" + myDate.getSeconds() + "-->" + str)
 }
 //----------------------------------------------------------------------------
 
-function SongCreated()
+async function SongCreatedBusi(obj)
 {
-  server1.daoapi.MusicFactory.SongCreated(maxData[0], async (obj) => {
+      const [series_address,token_id,ipfsCid,,,memetoken_address,start_time,song_id]=obj.data;        
       if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
-      const musicId=data.ipfsCid.substring(data.ipfsCid.lastIndexOf("/") + 1);
+      const musicId=ipfsCid.substring(ipfsCid.lastIndexOf("/") + 1);
       const sql ="INSERT IGNORE INTO w_music(block_num,music_id,series_address,memetoken_address,token_id,start_time,song_id) VALUES(?,?,?,?,?,?,?)";
-      const params=[obj.blockNumber,musicId,data.series_address,data.memetoken_address,data.token_id,data.start_time,data.song_id];
-      // maxData[0] = obj.blockNumber+1n;
+      const params=[obj.blockNumber,musicId,series_address,memetoken_address,token_id,start_time,song_id];
       await executeSql(sql, params); 
-     });
+
 
 }
 
-function ArtistRegistered()
+async function ArtistRegisteredBusi(obj)
 {
-  server1.daoapi.ArtistRegistry.ArtistRegistered(maxData[1], async (obj) => {
       if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
+      const [user_address]=obj.data;  
       const sql ="INSERT IGNORE INTO w_artist(block_num,user_address) VALUES(?,?)";
-      // maxData[1] = obj.blockNumber+1n;
-      const  params=[obj.blockNumber,data.user_address];
+      const  params=[obj.blockNumber,user_address];
       await executeSql(sql, params); 
-     });
+     
 }
 
-function Finalized()
+// function Ognftmined()
+// {
+//   server1.daoapi.Ognft.Mintd(maxData[10], async (obj) => {
+//       if(process.env.IS_DEBUGGER==='1') console.info(obj)
+//       const {data}=obj
+//       const sql ="INSERT IGNORE INTO t_nftog(block_num,user_address,token_id) VALUES(?,?,?)";
+//       // maxData[10] = obj.blockNumber+1n;
+//       const  params=[obj.blockNumber,data.to,data.tokenId];
+//       await executeSql(sql, params); 
+//      });
+// }
+
+// function Earlymined()
+// {
+//   server1.daoapi.Earlynft.Mintd(maxData[11], async (obj) => {
+//       if(process.env.IS_DEBUGGER==='1') console.info(obj)
+//       const {data}=obj
+//       const sql ="INSERT IGNORE INTO t_nftearly(block_num,user_address,token_id) VALUES(?,?,?)";
+//       // maxData[11] = obj.blockNumber+1n;
+//       const  params=[obj.blockNumber,data.to,data.tokenId];
+//       await executeSql(sql, params); 
+//      });
+// }
+
+// function Conmined()
+// {
+//   server1.daoapi.Connft.Mintd(maxData[12], async (obj) => {
+//       if(process.env.IS_DEBUGGER==='1') console.info(obj)
+//       const {data}=obj
+//       const sql ="INSERT IGNORE INTO t_nftcon(block_num,user_address,token_id) VALUES(?,?,?)";
+//       // maxData[12] = obj.blockNumber+1n;
+//       const  params=[obj.blockNumber,data.to,data.tokenId];
+//       await executeSql(sql, params); 
+//      });
+// }
+
+
+
+async function FinalizedBusi(obj)
 {
-  server1.daoapi.MusicFactory.Finalized(maxData[2], async (obj) => {
+
+
       if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
+      const [series_address,token_id,liquidity,song_id,lp_token_id]=obj.data;  
       const sql ="INSERT IGNORE INTO w_finalized(token_id,block_num,series_address,song_id,lp_token_id,liquidity) VALUES(?,?,?,?,?,?)";
-      const params=[data.token_id,obj.blockNumber,data.series_address,data.song_id,data.lp_token_id,data.liquidity];
-      // maxData[2] = obj.blockNumber+1n;
+      const params=[token_id,obj.blockNumber,series_address,song_id,lp_token_id,ethers.formatEther(liquidity)];
       await executeSql(sql, params); 
-     });
+
 }
 
 
-function Subscribed()
+async function SubscribedBusi(obj)
 {
-  server1.daoapi.MusicFactory.Subscribed(maxData[3], async (obj) => {
+
       if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
+      const [series_address,token_id,sub_id,user_address,sub_amount,meme_token,sub_seconds,start_second,song_id,ticme]=obj.data;  
       const sql ="INSERT IGNORE INTO t_music_sub(sub_id,block_num,token_id,user_address,start_second,sub_seconds,sub_type,sub_amount,series_address,meme_token,song_id,hash_time,tx_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)";
-      const params=[data.sub_id,obj.blockNumber,data.token_id,data.user_address,data.start_second,data.sub_seconds,0,data.sub_amount,data.series_address,data.meme_token,data.song_id,data.time,obj.transactionHash];
-      // maxData[3] = obj.blockNumber+1n;
+      const params=[sub_id,obj.blockNumber,token_id,user_address,start_second,sub_seconds,0,ethers.formatEther(sub_amount),series_address,ethers.formatEther(meme_token),song_id,ticme,obj.transactionHash];
       await executeSql(sql, params); 
-     });
+
 }
 
-function WhitelistAdded()
-{
-  server1.daoapi.MusicFactory.WhitelistAdded(maxData[4], async (obj) => {
+async function WhitelistAddedBusi(obj)
+{ 
       if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
+      const [series_address,token_id,accounts,song_id]=obj.data; 
       const sql ="INSERT IGNORE INTO t_whitelist(token_id,user_address,block_num,series_address,song_id) VALUES(?,?,?,?,?)";
-      // maxData[4] = obj.blockNumber+1n;
-      data.accounts.forEach( async userAddress=>{
-        let params=[data.token_id,userAddress.toLowerCase(),obj.blockNumber,data.series_address,data.song_id];
+      accounts.forEach( async userAddress=>{
+        let params=[token_id,userAddress.toLowerCase(),obj.blockNumber,series_address,song_id];
         await executeSql(sql, params); 
      })
-  });
-}
-
-
-function Claimed()
-{
-  server1.daoapi.FractionalVaultV3.Claimed(maxData[5], async (obj) => {
-      if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
-    
-         let sql="SELECT memetoken_address FROM w_music WHERE song_id=?";
-         const [rows,]=await promisePool.query(sql,[data.song_id]);
-         let meme_token=0;
-         let bnb_token=0;
-         if(rows[0].memetoken_address.toLowerCase()===data.token0.toLowerCase()){
-           meme_token=data.amount0;bnb_token=data.amount1;
-         } else {
-          meme_token=data.amount1;bnb_token=data.amount0;
-         }
-
-      sql ="INSERT IGNORE INTO t_claim(block_num,song_id,user_address,bnb_token,meme_token) VALUES(?,?,?,?,?)";
-      // maxData[5] = obj.blockNumber+1n;
-     
-      let params=[obj.blockNumber,data.song_id,data.user_address.toLowerCase(),bnb_token,meme_token];
-      await executeSql(sql, params); 
-  });
 
 }
 
 
-
-function userRedeemed()
+async function ClaimedBusi(obj)
 {
-  server1.daoapi.FractionalVaultV3.Redeemed(maxData[6], async (obj) => {
       if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
-
+      const [song_id,user_address,amount0,amount1,token0,token1]=obj.data; 
       let sql="SELECT memetoken_address FROM w_music WHERE song_id=?";
-      const [rows,]=await promisePool.query(sql,[data.song_id]);
+      const [rows,]=await promisePool.query(sql,[song_id]);
       let meme_token=0;
       let bnb_token=0;
-      if(rows[0].memetoken_address.toLowerCase()===data.token0.toLowerCase()){
-        meme_token=data.amount0;bnb_token=data.amount1;
+      if(rows[0].memetoken_address.toLowerCase()===token0.toLowerCase()){
+        meme_token=amount0;bnb_token=amount1;
       } else {
-       meme_token=data.amount1;bnb_token=data.amount0;
+      meme_token=amount1;bnb_token=amount0;
       }
 
-      sql ="INSERT IGNORE INTO t_user_redeem(block_num,song_id,user_address,bnb_token,meme_token,liqRemoved) VALUES(?,?,?,?,?,?)";
-      // maxData[6] = obj.blockNumber+1n;
-     
-      let params=[obj.blockNumber,data.song_id,data.user_address.toLowerCase(),bnb_token,meme_token,data.liqRemoved];
+      sql ="INSERT IGNORE INTO t_claim(block_num,song_id,user_address,bnb_token,meme_token) VALUES(?,?,?,?,?)";
+      let params=[obj.blockNumber,song_id,user_address.toLowerCase(),ethers.formatEther(bnb_token),ethers.formatEther(meme_token)];
       await executeSql(sql, params); 
-  });
 }
 
 
-function LPRedeemed()
+
+async function userRedeemedBusi(obj)
 {
-  server1.daoapi.VestingVault.LPRedeemed(maxData[7], async (obj) => {
       if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
+      const [user_address,song_id,liqRemoved,amount0,amount1,token0,token1]=obj.data; 
+
       let sql="SELECT memetoken_address FROM w_music WHERE song_id=?";
-      const [rows,]=await promisePool.query(sql,[data.song_id]);
+      const [rows]=await promisePool.query(sql,[song_id]);
       let meme_token=0;
       let bnb_token=0;
-      if(rows[0].memetoken_address.toLowerCase()===data.token0.toLowerCase()){
-        meme_token=data.amount0;bnb_token=data.amount1;
+      if(rows[0].memetoken_address.toLowerCase()===token0.toLowerCase()){
+        meme_token=amount0;bnb_token=amount1;
       } else {
-       meme_token=data.amount1;bnb_token=data.amount0;
+       meme_token=amount1;bnb_token=amount0;
+      }
+
+      sql ="INSERT IGNORE INTO t_user_redeem(block_num,song_id,user_address,bnb_token,meme_token,liqRemoved) VALUES(?,?,?,?,?,?)";     
+      let params=[obj.blockNumber,song_id,user_address.toLowerCase(),ethers.formatEther(bnb_token),ethers.formatEther(meme_token),ethers.formatEther(liqRemoved)];
+      await executeSql(sql, params); 
+
+}
+
+
+async function LPRedeemedBusi(obj)
+{
+      if(process.env.IS_DEBUGGER==='1') console.info(obj)
+      const [song_id,user_address,lpUnits,token0,token1,amount0,amount1]=obj.data; 
+      let sql="SELECT memetoken_address FROM w_music WHERE song_id=?";
+      const [rows,]=await promisePool.query(sql,[song_id]);
+      let meme_token=0;
+      let bnb_token=0;
+      if(rows[0].memetoken_address.toLowerCase()===token0.toLowerCase()){
+        meme_token=amount0;bnb_token=amount1;
+      } else {
+       meme_token=amount1;bnb_token=amount0;
       }
 
       sql ="INSERT IGNORE INTO t_artist_redeem(block_num,song_id,user_address,bnb_token,meme_token,lpUnits) VALUES(?,?,?,?,?,?)";
-      // maxData[7] = obj.blockNumber+1n;
-      let params=[obj.blockNumber,data.song_id,data.user_address.toLowerCase(),bnb_token,meme_token,data.lpUnits];
+      let params=[obj.blockNumber,song_id,user_address.toLowerCase(),ethers.formatEther(bnb_token),ethers.formatEther(meme_token),ethers.formatEther(lpUnits)];
       await executeSql(sql, params); 
-  });
+
 
 }
 
 
 
-function FeesClaimed()
+async function FeesClaimedBusi()
 {
-  server1.daoapi.VestingVault.FeesClaimed(maxData[8], async (obj) => {
+  
       if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
+      const [song_id,user_address,token0,token1,amount0,amount1]=obj.data; 
 
       let sql="SELECT memetoken_address FROM w_music WHERE song_id=?";
-      const [rows,]=await promisePool.query(sql,[data.song_id]);
+      const [rows]=await promisePool.query(sql,[song_id]);
       let meme_token=0;
       let bnb_token=0;
-      if(rows[0].memetoken_address.toLowerCase()===data.token0.toLowerCase()){
-        meme_token=data.amount0;bnb_token=data.amount1;
+      if(rows[0].memetoken_address.toLowerCase()===token0.toLowerCase()){
+        meme_token=amount0;bnb_token=amount1;
       } else {
-       meme_token=data.amount1;bnb_token=data.amount0;
+       meme_token=amount1;bnb_token=amount0;
       }
 
       sql ="INSERT IGNORE INTO t_claim_artist (block_num,song_id,user_address,bnb_token,meme_token) VALUES(?,?,?,?,?)";
-      // maxData[8] = obj.blockNumber+1n;
-      let params=[obj.blockNumber,data.song_id,data.user_address.toLowerCase(),bnb_token,meme_token];
+      let params=[obj.blockNumber,song_id,user_address.toLowerCase(),ethers.formatEther(bnb_token),ethers.formatEther(meme_token)];
       await executeSql(sql, params); 
-  });
+
 }
 
 
-function MusicPre()
+async function MusicPreBusi(obj)
 {
-  server1.daoapi.MusicFactory.MusicPre(maxData[9], async (obj) => {
+
       if(process.env.IS_DEBUGGER==='1') console.info(obj)
-      const {data}=obj
-      const re=await rpcClient.callContract(process.env.NEXT_PUBLIC_MusicFactory,factoryAbi,'musicPre',[data.songPreId]);
+      const [user_address,songPreId,,intervalTime]=obj.data; 
+      const re=await handlers[process.env.NEXT_PUBLIC_MusicFactory.toLowerCase()].contract.musicPre(songPreId);
 
       const musicId=re[1].substring(re[1].lastIndexOf("/") + 1);
       const confirmTime=re[6];
 
       let sql="INSERT INTO w_musc_pre(block_num,music_id,user_address,song_pre_id,planned_sec,confirm_time) VALUES(?,?,?,?,?,?)";
-      // maxData[9] = obj.blockNumber+1n;
-      let params=[obj.blockNumber,musicId,data.user_address.toLowerCase(),data.songPreId,data.intervalTime,confirmTime];
+      let params=[obj.blockNumber,musicId,user_address.toLowerCase(),songPreId,intervalTime,confirmTime];
       await executeSql(sql, params); 
-  });
+
 
 }
 
