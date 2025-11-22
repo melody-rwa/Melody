@@ -1,12 +1,15 @@
 const mysql = require('mysql2/promise'); 
 const dotenv=require('dotenv');
+const fs = require('fs');
 const serriseAbi=require('./src/abi/MusicSeries_abi.json')
 const factoryAbi=require('./src/abi/MusicFactory_abi.json');
 const vestvalut=require('./src/abi/VestingVault_abi.json');
 const fractvault3=require('./src/abi/FractionalVaultV3_abi.json');
 const artistregist=require('./src/abi/ArtistRegistry_abi.json');
 const { ethers, Interface, keccak256, toUtf8Bytes } = require("ethers");
+let saveBlock=Number(require('./maxblock/data.json'));
 dotenv.config();
+
 
 const abi = [
   "event FeesClaimed(uint256 indexed songId, address indexed artist, address token0, address token1, uint256 amount0, uint256 amount1)",
@@ -33,7 +36,8 @@ const topics = iface.fragments
 const CONFIRMATIONS = 15; // Delay 15 blocks to prevent rollback
 
 const provider = new ethers.JsonRpcProvider(process.env.NEXT_PUBLIC_HTTPS_URL);
-let lastSyncedBlock = 0;
+let lastSyncedBlock = 0; //starting block
+
 const wallet = new ethers.Wallet("f8b731a244fd1a9e5c291fc9f5c6f70ea9571d53581561cd61874bd55a4614fd", provider);
 
 const ADDRS = [
@@ -185,6 +189,12 @@ async function startMultiPolling() {
     loop(); 
 
     lastSyncedBlock =Number(await provider.getBlockNumber());
+    //Restore the last parsed block. If it is less than 1000, continue with the previous block. 
+    // Otherwise, record the missed block segments
+    if(lastSyncedBlock-saveBlock<1000) lastSyncedBlock=saveBlock;
+    else {
+      write(new Date().getTime(),`${saveBlock}--${lastSyncedBlock}`)
+    }
     // lastSyncedBlock=74022364
 
     while (true) {
@@ -195,7 +205,7 @@ async function startMultiPolling() {
                 //Calculate the range of this pull, with a maximum of 2000 blocks
                 const endBlock = Math.min(safeBlock, lastSyncedBlock + 2000);
                 
-                // console.log(` ${lastSyncedBlock + 1} -> ${endBlock}====>${endBlock-lastSyncedBlock-1}`);
+                console.log(` ${lastSyncedBlock + 1} -> ${endBlock}====>${endBlock-lastSyncedBlock-1}`);
                     const logs = await provider.getLogs({
                         fromBlock: lastSyncedBlock + 1,
                         toBlock: endBlock,
@@ -205,6 +215,10 @@ async function startMultiPolling() {
   
                 for (const log of logs) { await handle(log) }
                 lastSyncedBlock = endBlock;
+                if(endBlock-saveBlock>300){
+                    write('data',endBlock.toString());
+                    saveBlock=endBlock;
+                }
             } else {
 
                 await new Promise(r => setTimeout(r, 3000));
@@ -220,6 +234,7 @@ async function startMultiPolling() {
              await new Promise(r => setTimeout(r, 3000));
         }
         await new Promise(r => setTimeout(r, 2000));
+      
     }
 }
 
@@ -439,6 +454,11 @@ async function MusicPreBusi(obj)
 
 
 }
+
+ function write(fileName,text){
+    fs.writeFileSync(`./maxblock/${fileName}.json`,text,'utf-8');
+    console.log(`${text}--> write success！`);
+ }
 
 async function gracefulShutdown() {
    console.info('Shutting down gracefully...');
